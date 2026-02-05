@@ -1,14 +1,11 @@
-# .github/workflows/build-openstatus-tarballs.yml
-name: Build & Package OpenStatus images (manual)
+name: Build & Package OpenStatus images (manual, fixed 1.0.0)
 
 on:
   workflow_dispatch:   # 仅手动触发
 
 env:
   REGISTRY_PREFIX: registry.byd.com/public/chenxiujian/openstatus
-  # 外部镜像原 tag，如果官方升级可在这里改
-  LIBSQL_TAG:        latest
-  TINYBIRD_TAG:      latest
+  FIXED_TAG: "1.0.0"
 
 jobs:
   build:
@@ -20,55 +17,47 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Prepare date & git short sha
-        id: meta
-        run: |
-          echo "DATE=$(date +%F)" >> $GITHUB_OUTPUT
-          echo "SHA=${GITHUB_SHA::7}"   >> $GITHUB_OUTPUT
-
       # ---------- 1. 拉取外部镜像 ----------
       - name: Pull external images
         run: |
-          docker pull ghcr.io/tursodatabase/libsql-server:${{ env.LIBSQL_TAG }}
-          docker pull tinybirdco/tinybird-local:${{ env.TINYBIRD_TAG }}
+          docker pull ghcr.io/tursodatabase/libsql-server:latest
+          docker pull tinybirdco/tinybird-local:latest
 
       # ---------- 2. 构建自研镜像 ----------
-      # 统一用 compose build 即可，它会读取根目录 docker-compose.yaml
       - name: Build self-developed images
         run: |
           docker compose build workflows server private-location dashboard status-page
 
       # ---------- 3. re-tag & save ----------
       - name: Re-tag and save images
-        id: tars
         run: |
           mkdir tars
           # 外部镜像
-          for img in libsql tinybird-local; do
-            SRC=$([ "$img" = "libsql" ] && echo "ghcr.io/tursodatabase/libsql-server" || echo "tinybirdco/tinybird-local")
-            TAG=$([ "$img" = "libsql" ] && echo "${{ env.LIBSQL_TAG }}" || echo "${{ env.TINYBIRD_TAG }}")
-            NEW_TAG="${{ env.REGISTRY_PREFIX }}/${img}:${TAG}-${{ steps.meta.outputs.DATE }}"
-            docker tag "${SRC}:${TAG}" "$NEW_TAG"
-            docker save "$NEW_TAG" | gzip > "tars/${img}.tar.gz"
-          done
+          docker tag ghcr.io/tursodatabase/libsql-server:latest \
+                     ${{ env.REGISTRY_PREFIX }}/libsql:${{ env.FIXED_TAG }}
+          docker tag tinybirdco/tinybird-local:latest \
+                     ${{ env.REGISTRY_PREFIX }}/tinybird-local:${{ env.FIXED_TAG }}
+
           # 自研镜像
           for img in workflows server private-location dashboard status-page; do
-            OLD_TAG="openstatus/${img}:latest"
-            NEW_TAG="${{ env.REGISTRY_PREFIX }}/${img}:${{ steps.meta.outputs.SHA }}-${{ steps.meta.outputs.DATE }}"
-            docker tag "$OLD_TAG" "$NEW_TAG"
-            docker save "$NEW_TAG" | gzip > "tars/${img}.tar.gz"
+            docker tag openstatus/${img}:latest \
+                       ${{ env.REGISTRY_PREFIX }}/${img}:${{ env.FIXED_TAG }}
           done
-          ls -lh tars/
+
+          # 统一导出
+          for img in libsql tinybird-local workflows server private-location dashboard status-page; do
+            docker save ${{ env.REGISTRY_PREFIX }}/${img}:${{ env.FIXED_TAG }} \
+              | gzip > tars/${img}-${{ env.FIXED_TAG }}.tar.gz
+          done
 
       # ---------- 4. 打包 Artifact ----------
       - name: Create single zip
         run: |
-          zip -j openstatus-images-${{ steps.meta.outputs.SHA }}-${{ steps.meta.outputs.DATE }}.zip tars/*.tar.gz
+          zip -j openstatus-images-${{ env.FIXED_TAG }}.zip tars/*.tar.gz
 
       - name: Upload artifact (7 days retention)
         uses: actions/upload-artifact@v4
         with:
-          name: openstatus-images-${{ steps.meta.outputs.SHA }}-${{ steps.meta.outputs.DATE }}
-          path: openstatus-images-${{ steps.meta.outputs.SHA }}-${{ steps.meta.outputs.DATE }}.zip
+          name: openstatus-images-${{ env.FIXED_TAG }}
+          path: openstatus-images-${{ env.FIXED_TAG }}.zip
           retention-days: 7
-
