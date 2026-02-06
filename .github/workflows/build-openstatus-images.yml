@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY_PREFIX: registry.byd.com/public/chenxiujian/openstatus
-  TAG: 1.1.0
+  TAG: 1.0.0
 
 jobs:
   build-and-package:
@@ -58,16 +58,16 @@ jobs:
       - name: Save images to tar files
         run: |
           docker save ${{ env.REGISTRY_PREFIX }}/dashboard:${{ env.TAG }} \
-            > ./image-packages/dashboard-1.1.0.tar
+            > ./image-packages/dashboard-1.0.0.tar
           
           docker save ${{ env.REGISTRY_PREFIX }}/status-page:${{ env.TAG }} \
-            > ./image-packages/status-page-1.1.0.tar
+            > ./image-packages/status-page-1.0.0.tar
           
           docker save ${{ env.REGISTRY_PREFIX }}/libsql:${{ env.TAG }} \
-            > ./image-packages/libsql-1.1.0.tar
+            > ./image-packages/libsql-1.0.0.tar
           
           docker save ${{ env.REGISTRY_PREFIX }}/db-migrate:${{ env.TAG }} \
-            > ./image-packages/db-migrate-1.1.0.tar
+            > ./image-packages/db-migrate-1.0.0.tar
 
       # 生成配套的 docker-compose.yaml
       - name: Generate production docker-compose.yaml
@@ -85,7 +85,7 @@ jobs:
       services:
           libsql:
               container_name: openstatus-libsql
-              image: registry.byd.com/public/chenxiujian/openstatus/libsql:1.1.0
+              image: registry.byd.com/public/chenxiujian/openstatus/libsql:1.0.0
               networks:
                   - openstatus
               ports:
@@ -109,7 +109,7 @@ jobs:
 
           db-migrate:
               container_name: openstatus-db-migrate
-              image: registry.byd.com/public/chenxiujian/openstatus/db-migrate:1.1.0
+              image: registry.byd.com/public/chenxiujian/openstatus/db-migrate:1.0.0
               networks:
                   - openstatus
               working_dir: /app/packages/db
@@ -127,7 +127,7 @@ jobs:
 
           dashboard:
               container_name: openstatus-dashboard
-              image: registry.byd.com/public/chenxiujian/openstatus/dashboard:1.1.0
+              image: registry.byd.com/public/chenxiujian/openstatus/dashboard:1.0.0
               networks:
                   - openstatus
               ports:
@@ -154,7 +154,7 @@ jobs:
 
           status-page:
               container_name: openstatus-status-page
-              image: registry.byd.com/public/chenxiujian/openstatus/status-page:1.1.0
+              image: registry.byd.com/public/chenxiujian/openstatus/status-page:1.0.0
               networks:
                   - openstatus
               ports:
@@ -190,10 +190,10 @@ jobs:
       
       echo "Loading OpenStatus images..."
       
-      docker load < dashboard-1.1.0.tar
-      docker load < status-page-1.1.0.tar
-      docker load < libsql-1.1.0.tar
-      docker load < db-migrate-1.1.0.tar
+      docker load < dashboard-1.0.0.tar
+      docker load < status-page-1.0.0.tar
+      docker load < libsql-1.0.0.tar
+      docker load < db-migrate-1.0.0.tar
       
       echo "All images loaded successfully!"
       echo ""
@@ -206,22 +206,22 @@ jobs:
       - name: Create final archive
         run: |
           cd ./image-packages
-          tar -czvf ../openstatus-images-1.1.0.tar.gz \
-            dashboard-1.1.0.tar \
-            status-page-1.1.0.tar \
-            libsql-1.1.0.tar \
-            db-migrate-1.1.0.tar \
+          tar -czvf ../openstatus-images-1.0.0.tar.gz \
+            dashboard-1.0.0.tar \
+            status-page-1.0.0.tar \
+            libsql-1.0.0.tar \
+            db-migrate-1.0.0.tar \
             docker-compose.yaml \
             load-images.sh
           cd ..
-          mv openstatus-images-1.1.0.tar.gz ./image-packages/
+          mv openstatus-images-1.0.0.tar.gz ./image-packages/
 
       # 上传 Artifact（7天保留期）
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openstatus-images-1.1.0
-          path: ./image-packages/openstatus-images-1.1.0.tar.gz
+          name: openstatus-images-1.0.0
+          path: ./image-packages/openstatus-images-1.0.0.tar.gz
           retention-days: 7
           compression-level: 0  # 已经压缩过了，不需要再压缩
 
@@ -229,12 +229,12 @@ jobs:
       - name: Upload unpacked artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openstatus-images-unpacked-1.1.0
+          name: openstatus-images-unpacked-1.0.0
           path: |
-            ./image-packages/dashboard-1.1.0.tar
-            ./image-packages/status-page-1.1.0.tar
-            ./image-packages/libsql-1.1.0.tar
-            ./image-packages/db-migrate-1.1.0.tar
+            ./image-packages/dashboard-1.0.0.tar
+            ./image-packages/status-page-1.0.0.tar
+            ./image-packages/libsql-1.0.0.tar
+            ./image-packages/db-migrate-1.0.0.tar
             ./image-packages/docker-compose.yaml
             ./image-packages/load-images.sh
           retention-days: 7
