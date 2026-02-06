@@ -1,0 +1,71 @@
+# .github/workflows/build-and-package-images.yml
+name: Build & Package OpenStatus Docker Images
+
+on:
+  workflow_dispatch:  # 手动触发
+
+env:
+  REGISTRY: registry.byd.com/public/chenxiujian/openstatus
+  TAG: 1.1.0  # ← 已更新！
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # =============== 构建 dashboard 镜像 ===============
+      - name: Build dashboard image
+        run: |
+          docker build \
+            -f apps/dashboard/Dockerfile \
+            -t ${{ env.REGISTRY }}/dashboard:${{ env.TAG }} \
+            .
+
+      # =============== 构建 status-page 镜像 ===============
+      - name: Build status-page image
+        run: |
+          docker build \
+            -f apps/status-page/Dockerfile \
+            -t ${{ env.REGISTRY }}/status-page:${{ env.TAG }} \
+            .
+
+      # =============== 拉取 libsql 镜像并重打标签 ===============
+      - name: Pull libsql image and retag
+        run: |
+          docker pull ghcr.io/tursodatabase/libsql-server:latest
+          docker tag ghcr.io/tursodatabase/libsql-server:latest ${{ env.REGISTRY }}/libsql:${{ env.TAG }}
+
+      # =============== 拉取 bun 镜像用于 db-migrate ===============
+      - name: Pull bun image and retag for db-migrate
+        run: |
+          docker pull oven/bun:1.3.6
+          docker tag oven/bun:1.3.6 ${{ env.REGISTRY }}/db-migrate:${{ env.TAG }}
+
+      # =============== 保存为 .tar 文件 ===============
+      - name: Save images to tar files
+        run: |
+          mkdir -p image-tars
+          docker save ${{ env.REGISTRY }}/dashboard:${{ env.TAG }} -o image-tars/dashboard.tar
+          docker save ${{ env.REGISTRY }}/status-page:${{ env.TAG }} -o image-tars/status-page.tar
+          docker save ${{ env.REGISTRY }}/libsql:${{ env.TAG }} -o image-tars/libsql.tar
+          docker save ${{ env.REGISTRY }}/db-migrate:${{ env.TAG }} -o image-tars/db-migrate.tar
+
+      # =============== 打包 ZIP ===============
+      - name: Create ZIP archive
+        run: |
+          cd image-tars
+          zip -r ../openstatus-images-1.1.0.zip *.tar
+
+      # =============== 上传 Artifacts（保留7天） ===============
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openstatus-docker-images-1.1.0
+          path: openstatus-images-1.1.0.zip
+          retention-days: 7
