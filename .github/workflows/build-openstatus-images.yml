@@ -1,0 +1,240 @@
+# .github/workflows/build-images.yml
+name: Build and Package OpenStatus Images
+
+on:
+  workflow_dispatch:  # 仅手动触发
+
+env:
+  REGISTRY_PREFIX: registry.byd.com/public/chenxiujian/openstatus
+  TAG: 1.1.0
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 设置 Docker Buildx（支持多平台构建）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 构建 dashboard 镜像
+      - name: Build dashboard image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY_PREFIX }}/dashboard:${{ env.TAG }} \
+            -f apps/dashboard/Dockerfile \
+            .
+
+      # 构建 status-page 镜像
+      - name: Build status-page image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY_PREFIX }}/status-page:${{ env.TAG }} \
+            -f apps/status-page/Dockerfile \
+            .
+
+      # 拉取 libsql 镜像并重新 tag
+      - name: Pull and tag libsql image
+        run: |
+          docker pull ghcr.io/tursodatabase/libsql-server:latest
+          docker tag ghcr.io/tursodatabase/libsql-server:latest \
+            ${{ env.REGISTRY_PREFIX }}/libsql:${{ env.TAG }}
+
+      # 拉取 bun 镜像并重新 tag（用于 db-migrate）
+      - name: Pull and tag bun image
+        run: |
+          docker pull oven/bun:1.3.6
+          docker tag oven/bun:1.3.6 \
+            ${{ env.REGISTRY_PREFIX }}/db-migrate:${{ env.TAG }}
+
+      # 创建输出目录
+      - name: Create output directory
+        run: mkdir -p ./image-packages
+
+      # 保存各个镜像为 tar 文件
+      - name: Save images to tar files
+        run: |
+          docker save ${{ env.REGISTRY_PREFIX }}/dashboard:${{ env.TAG }} \
+            > ./image-packages/dashboard-1.1.0.tar
+          
+          docker save ${{ env.REGISTRY_PREFIX }}/status-page:${{ env.TAG }} \
+            > ./image-packages/status-page-1.1.0.tar
+          
+          docker save ${{ env.REGISTRY_PREFIX }}/libsql:${{ env.TAG }} \
+            > ./image-packages/libsql-1.1.0.tar
+          
+          docker save ${{ env.REGISTRY_PREFIX }}/db-migrate:${{ env.TAG }} \
+            > ./image-packages/db-migrate-1.1.0.tar
+
+      # 生成配套的 docker-compose.yaml
+      - name: Generate production docker-compose.yaml
+        run: |
+          cat > ./image-packages/docker-compose.yaml << 'EOF'
+      networks:
+          openstatus:
+              driver: bridge
+              name: openstatus
+
+      volumes:
+          libsql-data:
+              name: openstatus-libsql-data
+
+      services:
+          libsql:
+              container_name: openstatus-libsql
+              image: registry.byd.com/public/chenxiujian/openstatus/libsql:1.1.0
+              networks:
+                  - openstatus
+              ports:
+                  - "8080:8080"
+                  - "5001:5001"
+              volumes:
+                  - libsql-data:/var/lib/sqld
+              environment:
+                  - SQLD_NODE=primary
+              healthcheck:
+                  test:
+                      [
+                          "CMD-SHELL",
+                          'perl -e ''use IO::Socket::INET; exit(IO::Socket::INET->new(PeerAddr=>"127.0.0.1:8080",Timeout=>1) ? 0 : 1);''',
+                      ]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
+                  start_period: 10s
+              restart: unless-stopped
+
+          db-migrate:
+              container_name: openstatus-db-migrate
+              image: registry.byd.com/public/chenxiujian/openstatus/db-migrate:1.1.0
+              networks:
+                  - openstatus
+              working_dir: /app/packages/db
+              volumes:
+                  - .:/app
+              env_file:
+                  - .env.docker
+              environment:
+                  - DATABASE_URL=http://libsql:8080
+              command: ["sh", "-c", "bun install && bun run migrate"]
+              depends_on:
+                  libsql:
+                      condition: service_healthy
+              restart: "no"
+
+          dashboard:
+              container_name: openstatus-dashboard
+              image: registry.byd.com/public/chenxiujian/openstatus/dashboard:1.1.0
+              networks:
+                  - openstatus
+              ports:
+                  - "3000:3000"
+              env_file:
+                  - .env.docker
+              environment:
+                  - DATABASE_URL=http://libsql:8080
+                  - PORT=3000
+                  - HOSTNAME=0.0.0.0
+                  - AUTH_TRUST_HOST=true
+              depends_on:
+                  db-migrate:
+                      condition: service_completed_successfully
+                  libsql:
+                      condition: service_healthy
+              healthcheck:
+                  test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+                  interval: 15s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 45s
+              restart: unless-stopped
+
+          status-page:
+              container_name: openstatus-status-page
+              image: registry.byd.com/public/chenxiujian/openstatus/status-page:1.1.0
+              networks:
+                  - openstatus
+              ports:
+                  - "3001:3000"
+              env_file:
+                  - .env.docker
+              environment:
+                  - DATABASE_URL=http://libsql:8080
+                  - PORT=3000
+                  - HOSTNAME=0.0.0.0
+                  - AUTH_TRUST_HOST=true
+              depends_on:
+                  db-migrate:
+                      condition: service_completed_successfully
+                  libsql:
+                      condition: service_healthy
+              healthcheck:
+                  test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+                  interval: 15s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 45s
+              restart: unless-stopped
+      EOF
+
+      # 创建镜像加载脚本
+      - name: Create load-images.sh script
+        run: |
+          cat > ./image-packages/load-images.sh << 'EOF'
+      #!/bin/bash
+      # OpenStatus 镜像加载脚本
+      # 用法: chmod +x load-images.sh && ./load-images.sh
+      
+      echo "Loading OpenStatus images..."
+      
+      docker load < dashboard-1.1.0.tar
+      docker load < status-page-1.1.0.tar
+      docker load < libsql-1.1.0.tar
+      docker load < db-migrate-1.1.0.tar
+      
+      echo "All images loaded successfully!"
+      echo ""
+      echo "Available images:"
+      docker images | grep "registry.byd.com/public/chenxiujian/openstatus"
+      EOF
+          chmod +x ./image-packages/load-images.sh
+
+      # 打包所有文件为压缩包
+      - name: Create final archive
+        run: |
+          cd ./image-packages
+          tar -czvf ../openstatus-images-1.1.0.tar.gz \
+            dashboard-1.1.0.tar \
+            status-page-1.1.0.tar \
+            libsql-1.1.0.tar \
+            db-migrate-1.1.0.tar \
+            docker-compose.yaml \
+            load-images.sh
+          cd ..
+          mv openstatus-images-1.1.0.tar.gz ./image-packages/
+
+      # 上传 Artifact（7天保留期）
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openstatus-images-1.1.0
+          path: ./image-packages/openstatus-images-1.1.0.tar.gz
+          retention-days: 7
+          compression-level: 0  # 已经压缩过了，不需要再压缩
+
+      # 可选：同时上传解压后的文件列表（方便查看内容）
+      - name: Upload unpacked artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openstatus-images-unpacked-1.1.0
+          path: |
+            ./image-packages/dashboard-1.1.0.tar
+            ./image-packages/status-page-1.1.0.tar
+            ./image-packages/libsql-1.1.0.tar
+            ./image-packages/db-migrate-1.1.0.tar
+            ./image-packages/docker-compose.yaml
+            ./image-packages/load-images.sh
+          retention-days: 7
